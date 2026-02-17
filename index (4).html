@@ -1,0 +1,191 @@
+<div id="lu120-wrap" style="background:#f8fafc;border:1.5px solid #e2e8f0;border-radius:12px;padding:18px 20px;margin:8px 0;font-family:Arial,sans-serif;">
+  <div style="font-size:15px;font-weight:700;color:#1e293b;margin-bottom:4px;">Step 1 — Check Your Address</div>
+  <div style="font-size:12px;color:#64748b;margin-bottom:12px;">You must live within the L.U. 120 service area at the time of application to be eligible.</div>
+  <div style="display:flex;gap:8px;">
+    <input type="text" id="lu120-input" placeholder="e.g. 123 Main St, London, ON" autocomplete="off"
+      style="flex:1;padding:10px 13px;border:1.5px solid #cbd5e1;border-radius:8px;font-size:14px;color:#0f172a;outline:none;background:#fff;"/>
+    <button type="button" id="lu120-btn" onclick="lu120Check()"
+      style="background:#1a3a5c;color:#fff;border:none;border-radius:8px;padding:10px 18px;font-size:14px;font-weight:600;cursor:pointer;white-space:nowrap;">
+      <span id="lu120-btn-text">Check</span>
+    </button>
+  </div>
+  <div style="font-size:11px;color:#94a3b8;margin-top:5px;">Include city name — e.g. "London, ON" or "Woodstock, ON"</div>
+  <div id="lu120-result" style="display:none;margin-top:12px;border-radius:8px;padding:12px 14px;font-size:13px;line-height:1.5;"></div>
+  <div id="lu120-block" style="display:none;margin-top:10px;background:#fef2f2;border:1.5px solid #fca5a5;border-radius:8px;padding:10px 14px;font-size:12px;color:#991b1b;text-align:center;">
+    ⛔ You must confirm your address is within our coverage area to proceed with this application.
+  </div>
+</div>
+
+<script>
+(function(){
+
+  var EXCL=[
+    'chatham','chatham-kent','wallaceburg','ridgetown','palmyra','blenheim',
+    'wheatley','leamington','kingsville','tilbury','merlin','bothwell',
+    'essex','windsor','lasalle','tecumseh','lakeshore','amherstburg',
+    'harrow','belle river','comber','cottam',
+    'sarnia','point edward','corunna','mooretown','petrolia',
+    'forest','watford','thedford','arkona','kettle point','aazhoodena',
+    'grand bend','alvinston','brooke','brooke-alvinston','lambton',
+    'oil springs','oil city','florence','inwood','sombra','port lambton',
+    'courtright','wilkesport','dawn-euphemia',
+    'hamilton','burlington','oakville','mississauga','toronto','brampton',
+    'kitchener','waterloo','cambridge','guelph',
+    'brantford','paris','brant county','county of brant'
+  ];
+
+  var POLY=[
+    [-80.95,42.48],[-81.02,42.45],[-81.08,42.43],[-81.15,42.40],[-81.22,42.38],
+    [-81.30,42.36],[-81.38,42.32],[-81.45,42.30],[-81.52,42.28],[-81.60,42.27],
+    [-81.65,42.25],[-81.72,42.22],[-81.78,42.20],[-81.85,42.22],[-81.95,42.20],
+    [-82.02,42.22],[-82.08,42.25],[-82.12,42.28],[-82.15,42.32],[-82.10,42.40],
+    [-82.08,42.52],[-82.08,42.65],[-82.10,42.78],[-82.05,42.90],[-82.00,43.00],
+    [-81.92,43.12],[-81.82,43.22],[-81.78,43.32],[-81.72,43.42],[-81.72,43.52],
+    [-81.75,43.58],[-81.78,43.65],[-81.85,43.72],[-81.95,43.80],[-82.00,43.88],
+    [-81.95,43.95],[-81.88,44.00],[-81.78,44.02],[-81.70,44.05],[-81.62,44.10],
+    [-81.55,44.12],[-81.45,44.15],[-81.35,44.18],[-81.28,44.22],[-81.20,44.25],
+    [-81.10,44.28],[-81.00,44.30],[-80.58,44.22],[-80.62,44.18],[-80.68,44.15],
+    [-80.72,44.12],[-80.78,44.10],[-80.80,44.05],[-80.85,44.00],[-80.88,43.95],
+    [-80.90,43.90],[-80.88,43.85],[-80.85,43.78],[-80.82,43.72],[-80.80,43.65],
+    [-80.75,43.58],[-80.72,43.52],[-80.68,43.48],[-80.65,43.42],[-80.65,43.38],
+    [-80.62,43.32],[-80.60,43.25],[-80.58,43.18],[-80.60,43.12],[-80.62,43.08],
+    [-80.68,43.05],[-80.72,43.02],[-80.78,43.00],[-80.82,42.95],[-80.85,42.90],
+    [-80.85,42.80],[-80.85,42.70],[-80.88,42.65],[-80.95,42.58],[-80.95,42.48]
+  ];
+
+  function pip(pt,poly){
+    var x=pt[0],y=pt[1],inside=false;
+    for(var i=0,j=poly.length-1;i<poly.length;j=i++){
+      var xi=poly[i][0],yi=poly[i][1],xj=poly[j][0],yj=poly[j][1];
+      if((yi>y)!==(yj>y)&&x<(xj-xi)*(y-yi)/(yj-yi)+xi)inside=!inside;
+    }
+    return inside;
+  }
+
+  function isExcluded(name){
+    var low=name.toLowerCase();
+    for(var i=0;i<EXCL.length;i++) if(low.indexOf(EXCL[i])!==-1) return true;
+    return false;
+  }
+
+  // Write to hidden coverage_status field for JotForm Conditions
+  function setCoverageField(value){
+    setTimeout(function(){
+      try{
+        var selectors=[
+          'input[name*="coverage"]',
+          'input[id*="coverage"]',
+          '[data-fieldname*="coverage"] input'
+        ];
+        for(var i=0;i<selectors.length;i++){
+          var field=document.querySelector(selectors[i]);
+          if(field){
+            field.value=value;
+            field.dispatchEvent(new Event('input',{bubbles:true}));
+            field.dispatchEvent(new Event('change',{bubbles:true}));
+            break;
+          }
+        }
+      }catch(e){}
+    },100);
+  }
+
+  // Auto-fill the Address field on page 2
+  function fillAddressField(fullAddress){
+    setTimeout(function(){
+      try{
+        // Find street address input
+        var streetSelectors=[
+          'input[name*="addr_line1"]',
+          'input[id*="addr_line1"]',
+          'input[placeholder*="Street Address"]:not([placeholder*="Line 2"])'
+        ];
+        var streetField=null;
+        for(var i=0;i<streetSelectors.length;i++){
+          streetField=document.querySelector(streetSelectors[i]);
+          if(streetField) break;
+        }
+        
+        if(streetField && fullAddress){
+          var parts=fullAddress.split(',');
+          if(parts.length>0){
+            streetField.value=parts[0].trim();
+            streetField.dispatchEvent(new Event('input',{bubbles:true}));
+            streetField.dispatchEvent(new Event('change',{bubbles:true}));
+          }
+        }
+      }catch(e){}
+    },100);
+  }
+
+  function setSubmit(show){
+    setCoverageField(show?'confirmed':'');
+    document.getElementById('lu120-block').style.display=show?'none':'block';
+  }
+
+  function showResult(type,icon,title,msg,addr){
+    var el=document.getElementById('lu120-result');
+    var bg=type==='yes'?'#f0fdf4':type==='no'?'#fef2f2':'#fef9ec';
+    var bdr=type==='yes'?'#86efac':type==='no'?'#fca5a5':'#fcd34d';
+    var tc=type==='yes'?'#15803d':type==='no'?'#991b1b':'#92400e';
+    el.style.cssText='display:block;margin-top:12px;border-radius:8px;padding:12px 14px;font-size:13px;line-height:1.5;background:'+bg+';border:1.5px solid '+bdr+';';
+    el.innerHTML='<span style="font-size:20px;vertical-align:middle;margin-right:8px;">'+icon+'</span>'
+      +'<span style="font-weight:700;color:'+tc+';">'+title+'</span><br>'
+      +'<span style="color:#374151;">'+msg+'</span>'
+      +(addr?'<br><span style="font-size:11px;color:#94a3b8;font-style:italic;">Matched: '+addr+'</span>':'');
+  }
+
+  function setLoading(on){
+    document.getElementById('lu120-btn').disabled=on;
+    document.getElementById('lu120-btn-text').textContent=on?'Checking…':'Check';
+    document.getElementById('lu120-btn').style.background=on?'#94a3b8':'#1a3a5c';
+  }
+
+  window.lu120Check=function(){
+    var raw=document.getElementById('lu120-input').value.trim();
+    if(!raw){
+      showResult('warn','⚠️','Please enter an address','Type your service address above.','');
+      setSubmit(false);
+      return;
+    }
+    var q=raw;
+    if(!/ontario|,\s*on\b|canada/i.test(q)) q+=', Ontario, Canada';
+    setLoading(true);
+    setSubmit(false);
+
+    fetch('https://nominatim.openstreetmap.org/search?format=json&limit=1&q='+encodeURIComponent(q)+'&countrycodes=ca',
+      {headers:{'Accept-Language':'en','User-Agent':'LU120/1.0'}})
+    .then(function(r){return r.json();})
+    .then(function(data){
+      if(!data||!data.length){
+        showResult('warn','❓','Address not found',"Couldn't find that address. Try adding your city name or postal code.",'');
+        setSubmit(false);
+        return;
+      }
+      var lat=parseFloat(data[0].lat),lng=parseFloat(data[0].lon),name=data[0].display_name;
+      var eligible=pip([lng,lat],POLY) && !isExcluded(name);
+      
+      if(eligible){
+        showResult('yes','✅',"You're in our coverage area!",'Your address is within the L.U. 120 London service area. You may proceed with the application.',name);
+        setSubmit(true);
+        fillAddressField(name);
+      } else {
+        showResult('no','🚫','Not eligible — outside our jurisdiction','Your address is not within the L.U. 120 London service area. You must reside within our jurisdiction at the time of application to be eligible. This application cannot be submitted.',name);
+        setSubmit(false);
+      }
+    })
+    .catch(function(){
+      showResult('warn','🔌','Connection error','Address lookup failed. Check your internet connection and try again.','');
+      setSubmit(false);
+    })
+    .finally(function(){setLoading(false);});
+  };
+
+  document.getElementById('lu120-input').addEventListener('keydown',function(e){
+    if(e.key==='Enter'){e.preventDefault();lu120Check();}
+  });
+
+  // Initially hide submit (coverage not confirmed yet)
+  setTimeout(function(){setSubmit(false);},500);
+})();
+</script>
