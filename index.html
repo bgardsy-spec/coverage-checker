@@ -150,7 +150,9 @@
   .status.checking { display: block; background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.1); text-align: center; color: #b0c8b8; font-size: 14px; }
   .status.eligible { display: block; background: rgba(32,129,76,0.15); border: 2px solid #20814c; }
   .status.ineligible { display: block; background: rgba(204,51,51,0.12); border: 2px solid #cc3333; }
-  .status.error { display: block; background: rgba(255,140,0,0.1); border: 2px solid rgba(255,140,0,0.4); text-align: center; color: #ffaa44; font-size: 13.5px; line-height: 1.5; }
+  .status.error { display: block; background: rgba(255,140,0,0.1); border: 2px solid rgba(255,140,0,0.4); color: #ffaa44; font-size: 13.5px; line-height: 1.6; }
+  .status.error strong { color: #ffc94d; }
+  .status.error .found-line { display: block; margin-top: 8px; font-size: 12px; color: rgba(255,255,255,0.45); font-style: italic; }
 
   .status-header { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
   .status-icon { font-size: 28px; flex-shrink: 0; }
@@ -233,7 +235,7 @@
       <input type="text" id="addressInput" placeholder="e.g. 123 Main St, London, ON  N6A 1A1" autocomplete="off" />
       <button class="btn-check" id="checkBtn" onclick="checkAddress()">CHECK</button>
     </div>
-    <div class="hint">Include street address, city, province, and postal code</div>
+    <div class="hint">Include street address with street type (St, Ave, Cres), city, and postal code</div>
     <div class="status" id="statusBox"></div>
   </div>
 
@@ -247,8 +249,11 @@
 (function(){
   var APPLICATION_URL = 'https://form.jotform.com/243385861230254';
 
-  // Exclusion list — checked against Nominatim's geocoded display_name ONLY.
-  // Never checked against the raw typed address to avoid street-name false positives.
+  // Exclusion list — checked ONLY against locality-level fields of the
+  // geocoded result (city / town / village / municipality / county / district).
+  // NEVER checked against display_name or road names, because display_name
+  // includes the street name: "47 Paisley Avenue, London" would otherwise
+  // match the excluded village of Paisley and reject a valid London address.
   var EXCL=[
     'sarnia','point edward','corunna','mooretown','petrolia','oil springs',
     'oil city','florence','inwood','sombra','port lambton','courtright',
@@ -328,10 +333,107 @@
     return inside;
   }
 
-  function isExcluded(name){
-    var low=name.toLowerCase();
-    for(var i=0;i<EXCL.length;i++) if(low.indexOf(EXCL[i])!==-1) return true;
+  // Build a locality string from settlement-level fields only. Road and
+  // house number are deliberately excluded.
+  function localityString(addr){
+    return [
+      addr.city, addr.town, addr.village, addr.hamlet, addr.suburb,
+      addr.municipality, addr.county, addr.state_district, addr.region
+    ].filter(Boolean).join(', ').toLowerCase();
+  }
+
+  function isExcluded(addr){
+    var loc = localityString(addr);
+    for(var i=0;i<EXCL.length;i++) if(loc.indexOf(EXCL[i])!==-1) return true;
     return false;
+  }
+
+  // Parse the freeform input into street / city / postal code so the
+  // structured Nominatim endpoint can be used. Locks the city so the
+  // geocoder cannot wander to a same-named town elsewhere in Ontario.
+  function parseAddress(raw){
+    var input = raw.trim().replace(/\s+/g,' ');
+    var postalMatch = input.match(/[A-Za-z]\d[A-Za-z]\s?\d[A-Za-z]\d/);
+    var postalcode = '';
+    if(postalMatch){
+      var pc = postalMatch[0].toUpperCase().replace(/\s/g,'');
+      postalcode = pc.slice(0,3)+' '+pc.slice(3);
+    }
+    var rem = postalMatch ? input.replace(postalMatch[0],'') : input;
+    rem = rem.replace(/\b(ontario|canada)\b\.?/gi,'')
+             .replace(/(^|[\s,])on\b\.?/gi,'$1')
+             .replace(/,\s*,/g,',')
+             .replace(/\s+/g,' ')
+             .replace(/,\s*$/,'')
+             .trim();
+
+    var street='', city='';
+    var parts = rem.split(',').map(function(p){return p.trim();}).filter(Boolean);
+    if(parts.length>=2){
+      street = parts[0];
+      city = parts[parts.length-1];
+    } else {
+      // No commas: treat the last token as the city, the rest as the street.
+      var tokens = rem.split(' ').filter(Boolean);
+      if(tokens.length>=3){
+        city = tokens.pop();
+        street = tokens.join(' ');
+      } else {
+        street = rem;
+      }
+    }
+    return { street: street, city: city, postalcode: postalcode };
+  }
+
+  var NOMINATIM = 'https://nominatim.openstreetmap.org/search?';
+  var FETCH_OPTS = { headers: { 'Accept-Language': 'en' } };
+
+  function structuredSearch(p, usePostal){
+    var params =
+      'format=jsonv2&addressdetails=1&limit=1&countrycodes=ca' +
+      '&street=' + encodeURIComponent(p.street) +
+      '&city=' + encodeURIComponent(p.city) +
+      '&state=' + encodeURIComponent('Ontario') +
+      '&country=' + encodeURIComponent('Canada');
+    if(usePostal && p.postalcode) params += '&postalcode=' + encodeURIComponent(p.postalcode);
+    return fetch(NOMINATIM + params, FETCH_OPTS).then(function(r){ return r.json(); });
+  }
+
+  function freeformSearch(raw){
+    var q = raw;
+    if(!/ontario|,\s*on\b|canada/i.test(q)) q += ', Ontario, Canada';
+    var params = 'format=jsonv2&addressdetails=1&limit=1&countrycodes=ca&q=' + encodeURIComponent(q);
+    return fetch(NOMINATIM + params, FETCH_OPTS).then(function(r){ return r.json(); });
+  }
+
+  // Result must resolve to an actual street or building, not a settlement.
+  // A geocode that lands on the village of Paisley has no road component and
+  // fails this check instead of triggering a false OUTSIDE JURISDICTION.
+  function isAddressLevel(result){
+    var a = result.address || {};
+    return !!(a.house_number || a.road);
+  }
+
+  function cityMatches(result, typedCity){
+    if(!typedCity) return true;
+    var a = result.address || {};
+    var resultCities = [a.city, a.town, a.village, a.hamlet, a.municipality]
+      .filter(Boolean).map(function(c){ return c.toLowerCase(); });
+    if(!resultCities.length) return true;
+    var typed = typedCity.toLowerCase();
+    for(var i=0;i<resultCities.length;i++){
+      if(resultCities[i].indexOf(typed)!==-1 || typed.indexOf(resultCities[i])!==-1) return true;
+    }
+    return false;
+  }
+
+  function showEligible(box){
+    box.className='status eligible';
+    box.innerHTML=
+      '<div class="status-header"><div class="status-icon">&#9989;</div><div class="status-title">Address Verified</div></div>'+
+      '<div class="status-body">Your address is within <strong>Local 120\'s jurisdiction</strong>. You may proceed to the application form.</div>'+
+      '<a class="btn-proceed" href="'+APPLICATION_URL+'" target="_blank">PROCEED TO APPLICATION &#8594;</a>'+
+      '<div class="status-note">Your address on the application must match your Driver\'s Licence exactly.</div>';
   }
 
   function showIneligible(box){
@@ -343,45 +445,76 @@
       '<button class="btn-exit" onclick="window.close()">EXIT</button>';
   }
 
+  function escapeHtml(s){
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  // Amber retry state — a failed or ambiguous geocode is NOT the same as
+  // being outside jurisdiction and never shows the red EXIT screen.
+  function showRetry(box, message, foundName){
+    box.className='status error';
+    var html = message +
+      '<br>Include your full street name with street type (Ave, St, Cres), city, and postal code, then check again.';
+    if(foundName){
+      html += '<span class="found-line">Closest match found: '+escapeHtml(foundName)+'</span>';
+    }
+    html += '<br><span class="found-line">If the problem continues, contact the Training Centre at (519) 453-3330.</span>';
+    box.innerHTML = html;
+  }
+
   window.checkAddress=function(){
     var raw=document.getElementById('addressInput').value.trim();
     var btn=document.getElementById('checkBtn');
     var box=document.getElementById('statusBox');
     if(!raw){ document.getElementById('addressInput').focus(); return; }
 
-    var q=raw;
-    if(!/ontario|,\s*on\b|canada/i.test(q)) q+=', Ontario, Canada';
+    var parsed = parseAddress(raw);
 
     btn.disabled=true;
     box.className='status checking';
     box.innerHTML='<span class="spinner"></span> Verifying your address...';
 
-    fetch('https://nominatim.openstreetmap.org/search?format=json&limit=1&q='+encodeURIComponent(q)+'&countrycodes=ca',
-      {headers:{'Accept-Language':'en','User-Agent':'LU120/1.0'}})
-    .then(function(r){return r.json();})
+    if(!parsed.street || !parsed.city){
+      showRetry(box, '<strong>We need a bit more detail.</strong>');
+      btn.disabled=false;
+      return;
+    }
+
+    // Tiered lookup: structured with postal code, structured without
+    // (OSM postal coverage in Canada is patchy), then freeform fallback.
+    structuredSearch(parsed, true)
     .then(function(data){
-      if(!data||!data.length){
-        box.className='status error';
-        box.innerHTML='<strong>Address not found.</strong><br>Please include your full address with city and postal code. If the problem continues, contact the Training Centre at (519) 453-3330.';
+      if(data && data.length) return data;
+      return structuredSearch(parsed, false);
+    })
+    .then(function(data){
+      if(data && data.length) return data;
+      return freeformSearch(raw);
+    })
+    .then(function(data){
+      if(!data || !data.length){
+        showRetry(box, '<strong>Address not found.</strong>');
         return;
       }
-      var lat=parseFloat(data[0].lat),
-          lng=parseFloat(data[0].lon),
-          displayName=data[0].display_name;
+      var result = data[0];
 
-      // FIX: Polygon check first, then exclusion on the GEOCODED display name only —
-      // never on the raw typed address to prevent street-name false positives.
+      if(!isAddressLevel(result)){
+        showRetry(box, '<strong>We couldn\'t pinpoint that street address.</strong>', result.display_name);
+        return;
+      }
+      if(!cityMatches(result, parsed.city)){
+        showRetry(box, '<strong>That address matched a different city than the one you entered.</strong>', result.display_name);
+        return;
+      }
+
+      var lat=parseFloat(result.lat),
+          lng=parseFloat(result.lon);
+
       var inPolygon = pip([lng,lat],POLY);
-      var excluded  = isExcluded(displayName);
-      var eligible  = inPolygon && !excluded;
+      var excluded  = isExcluded(result.address || {});
 
-      if(eligible){
-        box.className='status eligible';
-        box.innerHTML=
-          '<div class="status-header"><div class="status-icon">&#9989;</div><div class="status-title">Address Verified</div></div>'+
-          '<div class="status-body">Your address is within <strong>Local 120\'s jurisdiction</strong>. You may proceed to the application form.</div>'+
-          '<a class="btn-proceed" href="'+APPLICATION_URL+'" target="_blank">PROCEED TO APPLICATION &#8594;</a>'+
-          '<div class="status-note">Your address on the application must match your Driver\'s Licence exactly.</div>';
+      if(inPolygon && !excluded){
+        showEligible(box);
       } else {
         showIneligible(box);
       }
