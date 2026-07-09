@@ -117,30 +117,36 @@
     text-transform: uppercase; margin-bottom: 8px;
   }
 
-  .input-row { display: flex; gap: 10px; }
+  .addr-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .fld { display: flex; flex-direction: column; }
+  .fld.full { grid-column: 1 / -1; }
+  .fld-label { font-size: 10.5px; color: rgba(255,255,255,0.55); font-weight: 700; letter-spacing: 1px; text-transform: uppercase; margin-bottom: 5px; }
+  .opt { color: rgba(255,255,255,0.35); font-weight: 400; letter-spacing: 0.5px; text-transform: none; }
 
   input[type="text"] {
-    flex: 1;
+    width: 100%;
     background: rgba(255,255,255,0.06);
     border: 2px solid rgba(255,184,22,0.3);
-    border-radius: 8px; padding: 12px 16px;
+    border-radius: 8px; padding: 12px 14px;
     font-family: 'Source Sans 3', Arial, sans-serif;
     font-size: 14px; color: #ffffff; outline: none;
     transition: border-color 0.2s;
   }
   input[type="text"]:focus { border-color: #ffb816; }
   input[type="text"]::placeholder { color: rgba(255,255,255,0.3); font-size: 13px; }
+  input.field-error { border-color: #cc3333; }
 
-  .hint { font-size: 11.5px; color: rgba(255,255,255,0.35); margin-top: 6px; font-style: italic; }
+  .hint { font-size: 11.5px; color: rgba(255,255,255,0.35); margin-top: 10px; font-style: italic; }
 
   .btn-check {
+    width: 100%; margin-top: 16px;
     background: #ffb816; color: #261b2b;
     border: none; border-radius: 8px;
     padding: 12px 20px;
     font-family: 'Oswald', Arial, sans-serif;
     font-size: 15px; font-weight: 700; letter-spacing: 1px;
     cursor: pointer; white-space: nowrap;
-    transition: background 0.2s, transform 0.1s; flex-shrink: 0;
+    transition: background 0.2s, transform 0.1s;
   }
   .btn-check:hover { background: #ffc94d; }
   .btn-check:active { transform: scale(0.97); }
@@ -230,12 +236,52 @@
       <span class="county-tag">Huron</span>
     </div>
 
-    <div class="field-label">Your Current Address</div>
-    <div class="input-row">
-      <input type="text" id="addressInput" placeholder="e.g. 123 Main St, London, ON  N6A 1A1" autocomplete="off" />
-      <button class="btn-check" id="checkBtn" onclick="checkAddress()">CHECK</button>
+    <div class="field-label">Your Details <span class="opt">(optional &mdash; saves retyping on the application)</span></div>
+    <div class="addr-grid">
+      <div class="fld">
+        <label class="fld-label" for="firstName">First Name</label>
+        <input type="text" id="firstName" placeholder="First name" autocomplete="off" />
+      </div>
+      <div class="fld">
+        <label class="fld-label" for="lastName">Last Name</label>
+        <input type="text" id="lastName" placeholder="Last name" autocomplete="off" />
+      </div>
+      <div class="fld">
+        <label class="fld-label" for="email">Email</label>
+        <input type="text" id="email" placeholder="you@example.com" autocomplete="off" />
+      </div>
+      <div class="fld">
+        <label class="fld-label" for="phone">Phone</label>
+        <input type="text" id="phone" inputmode="tel" placeholder="(519) 555-0123" autocomplete="off" />
+      </div>
     </div>
-    <div class="hint">Include street address with street type (St, Ave, Cres), city, and postal code</div>
+    <div style="height:18px"></div>
+
+    <div class="field-label">Your Current Address</div>
+    <div class="addr-grid">
+      <div class="fld">
+        <label class="fld-label" for="streetNumber">Street Number</label>
+        <input type="text" id="streetNumber" inputmode="numeric" placeholder="123" autocomplete="off" />
+      </div>
+      <div class="fld">
+        <label class="fld-label" for="unit">Unit / Apt <span class="opt">(optional)</span></label>
+        <input type="text" id="unit" placeholder="e.g. 4, Upper, B" autocomplete="off" />
+      </div>
+      <div class="fld full">
+        <label class="fld-label" for="streetName">Street Name</label>
+        <input type="text" id="streetName" placeholder="Main Street" autocomplete="off" />
+      </div>
+      <div class="fld">
+        <label class="fld-label" for="city">City / Town</label>
+        <input type="text" id="city" placeholder="London" autocomplete="off" />
+      </div>
+      <div class="fld">
+        <label class="fld-label" for="postal">Postal Code</label>
+        <input type="text" id="postal" placeholder="N6A 1A1" autocomplete="off" maxlength="7" />
+      </div>
+    </div>
+    <button class="btn-check" id="checkBtn" onclick="checkAddress()">CHECK ADDRESS</button>
+    <div class="hint">Province is Ontario. Your unit number is not used for the boundary check &mdash; only the street, city, and postal code.</div>
     <div class="status" id="statusBox"></div>
   </div>
 
@@ -427,12 +473,12 @@
     return false;
   }
 
-  function showEligible(box){
+  function showEligible(box, url){
     box.className='status eligible';
     box.innerHTML=
       '<div class="status-header"><div class="status-icon">&#9989;</div><div class="status-title">Address Verified</div></div>'+
       '<div class="status-body">Your address is within <strong>Local 120\'s jurisdiction</strong>. You may proceed to the application form.</div>'+
-      '<a class="btn-proceed" href="'+APPLICATION_URL+'" target="_blank">PROCEED TO APPLICATION &#8594;</a>'+
+      '<a class="btn-proceed" href="'+url+'" target="_blank">PROCEED TO APPLICATION &#8594;</a>'+
       '<div class="status-note">Your address on the application must match your Driver\'s Licence exactly.</div>';
   }
 
@@ -462,23 +508,49 @@
     box.innerHTML = html;
   }
 
+  function val(id){ return document.getElementById(id).value.trim(); }
+
   window.checkAddress=function(){
-    var raw=document.getElementById('addressInput').value.trim();
     var btn=document.getElementById('checkBtn');
     var box=document.getElementById('statusBox');
-    if(!raw){ document.getElementById('addressInput').focus(); return; }
 
-    var parsed = parseAddress(raw);
+    var streetNumber=val('streetNumber');
+    var streetName=val('streetName');
+    var city=val('city');
+    var postal=val('postal');
+    var unit=val('unit');
+    var firstName=val('firstName');
+    var lastName=val('lastName');
+    var email=val('email');
+    var phone=val('phone');
+    // unit is captured for the application form (address line 2) but is
+    // deliberately NOT sent to the geocoder — text like "Upper" / "Apt 2" is
+    // exactly what breaks the address lookup.
+
+    // Validate the fields the boundary check needs; highlight any blanks.
+    var required=[['streetNumber',streetNumber],['streetName',streetName],['city',city],['postal',postal]];
+    var firstMissing=null;
+    required.forEach(function(f){
+      var el=document.getElementById(f[0]);
+      if(!f[1]){ el.classList.add('field-error'); if(!firstMissing) firstMissing=el; }
+      else { el.classList.remove('field-error'); }
+    });
+    if(firstMissing){
+      showRetry(box, '<strong>Please fill in every address field.</strong>');
+      firstMissing.focus();
+      return;
+    }
+
+    // Structured fields feed the geocoder directly — no freeform parsing needed.
+    var postalClean=postal.toUpperCase().replace(/\s+/g,'');
+    if(postalClean.length===6) postalClean=postalClean.slice(0,3)+' '+postalClean.slice(3);
+    var parsed = { street: streetNumber+' '+streetName, city: city, postalcode: postalClean };
+    // Freeform fallback string for the final lookup tier.
+    var raw = parsed.street+', '+city+', Ontario '+postalClean;
 
     btn.disabled=true;
     box.className='status checking';
     box.innerHTML='<span class="spinner"></span> Verifying your address...';
-
-    if(!parsed.street || !parsed.city){
-      showRetry(box, '<strong>We need a bit more detail.</strong>');
-      btn.disabled=false;
-      return;
-    }
 
     // Tiered lookup: structured with postal code, structured without
     // (OSM postal coverage in Canada is patchy), then freeform fallback.
@@ -514,7 +586,27 @@
       var excluded  = isExcluded(result.address || {});
 
       if(inPolygon && !excluded){
-        showEligible(box);
+        // Prefill the application form so the applicant does not retype anything:
+        // address -> visible Address field (qid 33), name/email/phone -> qids
+        // 11/12/13 (phoneNumber13 masked -> digits only). Empty optional fields
+        // are omitted from the URL.
+        var params = [
+          ['address[addr_line1]', parsed.street],
+          ['address[city]', city],
+          ['address[state]', 'Ontario'],
+          ['address[postal]', postalClean],
+          ['address[country]', 'Canada']
+        ];
+        if(unit)      params.push(['address[addr_line2]', unit]);
+        if(firstName) params.push(['name[first]', firstName]);
+        if(lastName)  params.push(['name[last]', lastName]);
+        if(email)     params.push(['email', email]);
+        if(phone)     params.push(['phoneNumber13[full]', phone.replace(/\D/g,'')]);
+
+        var url = APPLICATION_URL + '?' + params.map(function(p){
+          return p[0] + '=' + encodeURIComponent(p[1]);
+        }).join('&');
+        showEligible(box, url);
       } else {
         showIneligible(box);
       }
@@ -526,8 +618,11 @@
     .finally(function(){btn.disabled=false;});
   };
 
-  document.getElementById('addressInput').addEventListener('keydown',function(e){
-    if(e.key==='Enter') checkAddress();
+  // Enter from any field triggers the check.
+  ['firstName','lastName','email','phone','streetNumber','unit','streetName','city','postal'].forEach(function(id){
+    document.getElementById(id).addEventListener('keydown',function(e){
+      if(e.key==='Enter') checkAddress();
+    });
   });
 })();
 </script>
