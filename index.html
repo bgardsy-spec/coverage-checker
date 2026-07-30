@@ -543,6 +543,21 @@
       '<button class="btn-exit" onclick="window.close()">EXIT</button>';
   }
 
+  // Provisional pass: the exact street/postal could not be located (e.g. a new
+  // subdivision not yet on the map), but the TOWN is within our jurisdiction.
+  // Let the applicant proceed; staff will verify the exact address against the
+  // Driver's Licence. Amber, never the red EXIT screen.
+  function showProvisional(box, url){
+    box.className='status eligible';
+    box.style.borderLeft='6px solid #d99a00';
+    box.innerHTML=
+      '<div class="status-header"><div class="status-icon">&#9989;</div><div class="status-title">Your Town Is In Our Area</div></div>'+
+      '<div class="status-body">Your town is within <strong>Local 120\'s jurisdiction</strong>, but we couldn\'t confirm your exact street address automatically (this is common for newer addresses). '+
+      '<strong>You may proceed.</strong> Training Centre staff will verify your address against your Driver\'s Licence.</div>'+
+      '<a class="btn-proceed" href="'+url+'" target="_blank">PROCEED TO APPLICATION &#8594;</a>'+
+      '<div class="status-note">Your address on the application must match your Driver\'s Licence exactly.</div>';
+  }
+
   function escapeHtml(s){
     return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
   }
@@ -628,11 +643,52 @@
       }
     });
 
+    // Prefill the application form so the applicant does not retype anything:
+    // address -> visible Address field (qid 33), name/email/phone -> qids
+    // 11/12/13 (phoneNumber13 masked -> digits only). Empty optional fields
+    // are omitted from the URL. Shared by the verified and provisional paths.
+    function buildApplicationUrl(){
+      var params = [
+        ['address[addr_line1]', streetNumber+' '+streetName],
+        ['address[city]', city],
+        ['address[state]', 'Ontario'],
+        ['address[postal]', postalClean],
+        ['address[country]', 'Canada']
+      ];
+      if(unit)      params.push(['address[addr_line2]', unit]);
+      if(firstName) params.push(['name[first]', firstName]);
+      if(lastName)  params.push(['name[last]', lastName]);
+      if(email)     params.push(['email', email]);
+      if(phone)     params.push(['phoneNumber13[full]', phone.replace(/\D/g,'')]);
+      return APPLICATION_URL + '?' + params.map(function(p){
+        return p[0] + '=' + encodeURIComponent(p[1]);
+      }).join('&');
+    }
+
     var nearMiss = null;
     function ladderFail(){
-      if(nearMiss) showRetry(box, nearMiss.msg, nearMiss.name);
-      else showRetry(box, '<strong>Address not found.</strong>');
-      btn.disabled=false;
+      // The exact street/postal could not be geocoded. Before giving up, fall
+      // back to the TOWN alone: if the town itself is within jurisdiction, let
+      // the applicant proceed provisionally (staff verify against the licence);
+      // if the town is out of area, that is a real decline; if even the town
+      // will not resolve, show the normal retry.
+      function retry(){
+        if(nearMiss) showRetry(box, nearMiss.msg, nearMiss.name);
+        else showRetry(box, '<strong>Address not found.</strong>');
+        btn.disabled=false;
+      }
+      freeformSearch(city).then(function(data){
+        if(!data || !data.length){ retry(); return; }
+        var t = data[0];
+        var lat=parseFloat(t.lat), lng=parseFloat(t.lon);
+        if(pip([lng,lat],POLY) && !isExcluded(t.address || {})){
+          showProvisional(box, buildApplicationUrl());
+          btn.disabled=false;
+        } else {
+          showIneligible(box);
+          btn.disabled=false;
+        }
+      }).catch(retry);
     }
     function tryNext(i){
       if(i>=attempts.length){ ladderFail(); return; }
@@ -661,27 +717,7 @@
       var excluded  = isExcluded(result.address || {});
 
       if(inPolygon && !excluded){
-        // Prefill the application form so the applicant does not retype anything:
-        // address -> visible Address field (qid 33), name/email/phone -> qids
-        // 11/12/13 (phoneNumber13 masked -> digits only). Empty optional fields
-        // are omitted from the URL.
-        var params = [
-          ['address[addr_line1]', streetNumber+' '+streetName],
-          ['address[city]', city],
-          ['address[state]', 'Ontario'],
-          ['address[postal]', postalClean],
-          ['address[country]', 'Canada']
-        ];
-        if(unit)      params.push(['address[addr_line2]', unit]);
-        if(firstName) params.push(['name[first]', firstName]);
-        if(lastName)  params.push(['name[last]', lastName]);
-        if(email)     params.push(['email', email]);
-        if(phone)     params.push(['phoneNumber13[full]', phone.replace(/\D/g,'')]);
-
-        var url = APPLICATION_URL + '?' + params.map(function(p){
-          return p[0] + '=' + encodeURIComponent(p[1]);
-        }).join('&');
-        showEligible(box, url);
+        showEligible(box, buildApplicationUrl());
       } else {
         showIneligible(box);
       }
